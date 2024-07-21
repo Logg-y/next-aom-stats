@@ -1,10 +1,9 @@
 import { MajorGods, MajorGodsPortraitPath } from "@/types/MajorGods";
-import { IPlayerData } from "@/types/MythRecs";
+import { RecordedGamePlayerMetadata } from "@/types/RecordedGame";
 import Image from "next/image";
 
-export default function TeamTile({ playerData }: { playerData: IPlayerData }) {
-  const { name, civ } = playerData;
-  const godName = MajorGods[civ];
+export default function TeamTile({ playerData }: { playerData: RecordedGamePlayerMetadata }) {
+  const godName = MajorGods[playerData.civ];
   const godPortraitPath = MajorGodsPortraitPath[godName];
   return (
     <div className="flex flex-col items-center my-auto px-2 w-32">
@@ -16,7 +15,7 @@ export default function TeamTile({ playerData }: { playerData: IPlayerData }) {
         className="rounded-full border-2 border-amber-400"
       ></Image>
       <div className="text-center truncate w-30 font-medium">
-        {name}
+        {playerData.name}
       </div>
       <div className="text-center truncate w-30 font-medium italic">
         Rank: 1450

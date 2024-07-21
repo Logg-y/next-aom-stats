@@ -44,5 +44,4 @@ export default async function uploadRec(params: UploadRecParams): Promise<void> 
     throw new Error("Error uploading to s3");
   }
 
-  return result;
 }
