@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useContext, useRef } from "react";
 import { SpinnerWithText } from "../spinner";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -8,16 +8,20 @@ import { useToast } from "../ui/use-toast";
 import { Input } from "../ui/input";
 import RecTile from "./rec-tile";
 import { getMythRecs } from "@/server/controllers/mongo-controller";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { InfoIcon } from "lucide-react";
+import { IRecordedGame } from "@/types/RecordedGame";
 
 export default function RecordedGames() {
-  const [recs, setRecs] = useState<any[]>([]);
+  const [recs, setRecs] = useState<IRecordedGame[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [page, setPage] = useState<
-    number | undefined
-  >(undefined);
   const [recFile, setRecFile] = useState(null);
   const [fileName, setFileName] = useState("");
-
+  const [currentPage, setCurrentPage] = useState<number>(0);
   const { toast } = useToast();
 
   const handleFileChange = (e: any) => {
@@ -47,6 +51,7 @@ export default function RecordedGames() {
       const formData = new FormData();
       formData.append("file", recFile);
       formData.append("userName", userName);
+      formData.append("gameTitle", fileName);
 
       const response = await fetch("/api/recordedGames", {
         method: "POST",
@@ -58,8 +63,15 @@ export default function RecordedGames() {
           title: "Success",
           description: "Rec uploaded successfully",
         });
-        // todo - update state and revalidate
-      } else {
+        // TODO - update state and revalidate
+      } else if(response.status === 400) {
+        toast({
+          title: "Rec Already Uploaded",
+          description: "This rec has already been uploaded - someone beat you to it!",
+        });
+      }
+      
+      else {
         toast({
           title: "Error Uploading Rec",
           description: "Try again later",
@@ -77,27 +89,42 @@ export default function RecordedGames() {
     }
   }
 
+  async function fetchRecs(currentPage: number): Promise<void> {
+    if (currentPage === -1) return;
+    const mythRecs = await getMythRecs(currentPage);
+
+    if (!mythRecs.length) {
+      setCurrentPage(-1);
+      return;
+    }
+
+    // add mythrecs to recs
+    setRecs((prevRecs) => [...prevRecs, ...mythRecs]);
+  }
+
   useEffect(() => {
-    async function getRecs(): Promise<void> {
-      console.log("fetching recs");
-      setIsLoading(true);
-      try {
-        // load first page of recs on page load
-        const mythRecs = await getMythRecs();
-        setPage(1);
-        setRecs(mythRecs);
+    console.log("useEffect");
+    async function handleScroll(): Promise<void> {
+      const scrollPosition = window.scrollY + window.innerHeight;
+      const pageHeight = document.documentElement.scrollHeight;
+      if (
+        pageHeight - scrollPosition <= 300 &&
+        currentPage !== -1 &&
+        !isLoading
+      ) {
+        setIsLoading(true);
+        setCurrentPage((prevPage) => prevPage + 1);
+        console.log(`fetchRecs page ${currentPage} inside handleScroll`);
+        fetchRecs(currentPage);
         setIsLoading(false);
-      } catch (err) {
-        console.error("Error fetching recs", err);
-        setIsLoading(false);
-        toast({
-          title: "Error Fetching Recs",
-          description: "Try again later",
-        });
       }
     }
-    getRecs();
-  }, [toast]);
+    //console.log(`fetchRecs page ${currentPage} outside scroll conditional`);
+    //fetchRecs(currentPage);
+    //setIsLoading(false);
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [currentPage, isLoading]);
 
   return (
     <Card className="p-4">
@@ -105,14 +132,21 @@ export default function RecordedGames() {
         <h2>Recorded Games</h2>
       </div>
       <div className="mx-auto w-fit mt-4 bg-secondary p-4 rounded-xl outline-double text-gold">
-        <div className="text-center">
+        <div className="flex gap-2 text-center">
           <h3 className="text-white">Upload an AoM Retold Recorded Game</h3>
-          <p>
-            C:\Users\fitzbro\Games\Age of Mythology Retold
-            Beta\yourSteamId\replays
-          </p>
+          <Tooltip>
+            <TooltipTrigger>
+              <InfoIcon className="cursor-pointer hover:text-primary" />
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>
+                C:\Users\fitzbro\Games\Age of Mythology
+                RetoldBeta\yourSteamId\replays
+              </p>
+            </TooltipContent>
+          </Tooltip>
         </div>
-        <form onSubmit={handleUploadFile} className="flex mt-1">
+        <form onSubmit={handleUploadFile} className="flex mt-1 flex-col">
           <Input
             type="file"
             onChange={handleFileChange}
@@ -126,26 +160,30 @@ export default function RecordedGames() {
             placeholder="Enter file name"
             className="border-b border-gray-400 focus:outline-none focus:border-blue-500 px-2 py-1"
           />
-          <Button type="submit" className="mx-2">
+          <Button type="submit" className="flex mx-auto mt-2">
             Upload
           </Button>
         </form>
       </div>
       <div className="mt-4">
-        {isLoading ? (
+        {isLoading && recs ? (
           <SpinnerWithText text={"Loading recorded games..."} />
         ) : (
           <div className="flex flex-row flex-wrap justify-center">
-            {recs?.map((rec) => (
-              <Card
-                key={rec.Key}
-                className="bg-secondary rounded-lg m-1 p-2 flex w-fit"
-              >
-                <div key={rec.Key}>
-                  <RecTile rec={rec}></RecTile>
-                </div>
-              </Card>
-            ))}
+            {recs?.map(
+              (rec) => (
+                (
+                  <Card
+                    key={rec.gameGuid}
+                    className="bg-secondary rounded-lg m-1 p-2 flex w-fit"
+                  >
+                    <div>
+                      <RecTile rec={rec}></RecTile>
+                    </div>
+                  </Card>
+                )
+              )
+            )}
           </div>
         )}
       </div>

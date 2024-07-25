@@ -1,88 +1,63 @@
-import { downloadS3File } from "@/server/aws";
-import { DownloadIcon } from "lucide-react";
-import Image from "next/image";
-import { toast } from "../ui/use-toast";
+"use client";
+
 import TeamTile from "./team-tile";
-import { useEffect, useState } from "react";
-import { MythRecs as MythRec } from "@/types/MythRecs";
+import { randomMapNameToData } from "@/types/RandomMap";
+import RecTitle from "./rec-title";
+import RecMap from "./rec-map";
+import RecFooter from "./rec-footer";
+import { useContext, useEffect } from "react";
+import { WindowContext } from "../provider/window-provider";
+import { IRecordedGame } from "@/types/RecordedGame";
+import { splitTeams } from "@/server/teams";
 
-export default function RecTile({ rec }: { rec: MythRec }) {
-  const { gameGuid, playerData, mapName, createdAt } = rec;
-  const [screenSize, setScreenSize] = useState({
-    width: window.innerWidth,
-    height: window.innerHeight,
-  });
-
-  useEffect(() => {
-    const handleResize = () => {
-      setScreenSize({
-        width: window.innerWidth,
-        height: window.innerHeight,
-      });
-    };
-
-    window.addEventListener("resize", handleResize);
-
-    // Clean up the event listener on component unmount
-    return () => {
-      window.removeEventListener("resize", handleResize);
-    };
-  }, []);
-
-  async function handleRecDownload(key: string): Promise<void> {
-    // TODO - add loading spinner
-    console.log("downloading rec", key);
-    try {
-      const url = await downloadS3File(key);
-      window.open(url, "_blank");
-    } catch (err) {
-      console.error("Error downloading rec", err);
-      toast({
-        title: "Error Downloading Rec",
-        description: "Try again later",
-      });
-    }
-  }
+export default function RecTile({ rec }: { rec: IRecordedGame }) {
+  const windowSize = useContext(WindowContext);
 
   // TODO - process team data
 
+  const mapData = randomMapNameToData(rec.gameMapName);
+  const teamSplit = splitTeams(rec);
+
+  let teamCount = 0;
+  const leftTeams = teamSplit.left.map((teamIndex) =>
+    (
+    teamCount++,
+    <TeamTile key={`${rec.gameGuid}-${teamCount}`} recData={rec} teamIndex={teamIndex}/>
+  ));
+  const rightTeams = teamSplit.right.map((teamIndex) =>
+  (
+    teamCount++,
+    <TeamTile key={`${rec.gameGuid}-${teamCount}`} recData={rec} teamIndex={teamIndex} />
+  ))
+
   return (
     <div>
-      {screenSize.width >= 768 ? (
+      {windowSize && windowSize.width >= 768 ? (
         <div>
           <div className="flex">
-            <TeamTile playerData={playerData[1]} /> {/* TODO - make team dynamic */}
+            {leftTeams}
             <div>
-              <div className="text-center text-xl text-prim font-semibold w-[240px] min-h-2-lines line-clamp-2">
-                Mista 1v1 Fast Mythic Rush
-              </div>
-              <Image
-                src={`/maps/${mapName}.png`}
-                alt={mapName}
-                width={240}
-                height={240}
-              ></Image>
+              <RecTitle gameTitle={rec.gameTitle} />
+              <RecMap mapData={mapData} />
             </div>
-            <TeamTile playerData={playerData[2]} /> {/* TODO - make team dynamic */}
+            {rightTeams}
           </div>
-          <div className="flex flex-row">
-            <div>
-              <p className="text-gold">Uploaded By:</p>
-              <p>FitzBro</p> {/* TODO - add link to player profile */}
-            </div>
-            <div className="flex flex-row ml-auto mt-auto">
-              <div px-2>
-                <p>5</p>
-              </div>
-              <DownloadIcon
-                onClick={() => handleRecDownload(gameGuid)}
-                className="ml-1 cursor-pointer text-primary"
-              />
-            </div>
-          </div>
+          <RecFooter rec={rec} />
         </div>
       ) : (
-        <div>hello</div>
+        <div>
+          <div className="flex flex-col">
+            <div>
+              <RecTitle gameTitle={rec.gameTitle} />
+              <RecMap mapData={mapData} />
+            </div>
+            <div className="mx-auto pt-2">
+              {leftTeams}
+              {rightTeams}
+            </div>
+          </div>
+          <RecFooter rec={rec} />
+        </div>
       )}
     </div>
   );

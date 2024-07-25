@@ -1,15 +1,16 @@
-import { MajorGods, MajorGodsPortraitPath } from "@/types/MajorGods";
-import { IPlayerData } from "@/types/MythRecs";
+import { teamIndexToPlayerData } from "@/server/teams";
+import { majorGodIndexToData } from "@/types/MajorGods";
+import { IRecordedGame } from "@/types/RecordedGame";
+import { RecordedGamePlayerMetadata } from "@/types/RecordedGameParser";
 import Image from "next/image";
 
-export default function TeamTile({ playerData }: { playerData: IPlayerData }) {
+function PlayerTile(playerData: RecordedGamePlayerMetadata) {
   const { name, civ } = playerData;
-  const godName = MajorGods[civ];
-  const godPortraitPath = MajorGodsPortraitPath[godName];
+  const godData = majorGodIndexToData(civ);
   return (
     <div className="flex flex-col items-center my-auto px-2 w-32">
       <Image
-        src={godPortraitPath}
+        src={godData.portraitPath}
         alt={"super cool god description"}
         width={64}
         height={64}
@@ -19,7 +20,34 @@ export default function TeamTile({ playerData }: { playerData: IPlayerData }) {
         {name}
       </div>
       <div className="text-center truncate w-30 font-medium italic">
-        Rank: 1450
+        Rank: TBD
+      </div>
+    </div>
+  );
+}
+
+export default function TeamTile({recData, teamIndex} : {recData: IRecordedGame, teamIndex: number}) {
+  const playerData = teamIndexToPlayerData(recData, teamIndex);
+  // The format of the teams in the recs seems to be a problem and needs more real recs to work on - in particular, what to do with a value of -1
+  // and just doing this should hopefully push things back towards how they were before
+  //return PlayerTile(playerData[0]);
+
+  const teamName = `Team ${1+teamIndex}`;
+  let teamHeader = undefined;
+  if (recData.teams.length >= 3)
+  {
+    teamHeader = (
+      <div className="text-center truncate w-30 font-medium">
+        {teamName}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col items-center my-auto px-2 w-32">
+      {teamHeader}
+      <div>
+        {playerData.map((thisPlayer) => PlayerTile(thisPlayer))}
       </div>
     </div>
   );

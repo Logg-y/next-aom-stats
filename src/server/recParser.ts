@@ -1,11 +1,11 @@
 "use server";
-import { RecParseError, RecordedGameMetadata, RecordedGamePlayerMetadata, RecordedGameMetadataNumbers, RecordedGameMetadataStrings, RecordedGameMetadataBooleans, RecordedGamePlayerMetadataBooleans, RecordedGamePlayerMetadataNumbers, RecordedGamePlayerMetadataStrings } from "@/types/RecordedGame";
+import { RecParseError, RecordedGameMetadata, RecordedGamePlayerMetadata, RecordedGameMetadataNumbersRequired, RecordedGameMetadataStringsRequired, RecordedGameMetadataBooleansRequired, RecordedGamePlayerMetadataBooleansRequired, RecordedGamePlayerMetadataNumbersRequired, RecordedGamePlayerMetadataStringsRequired, RecordedGamePlayerMetadataNumbersOptional, RecordedGameMetadataNumbersOptional, RecordedGamePlayerMetadataStringsOptional, RecordedGameMetadataStringsOptional, RecordedGamePlayerMetadataBooleansOptional, RecordedGameMetadataBooleansOptional, RecordedGameRawKeysToCamelCase } from "@/types/RecordedGameParser";
 import { promisify } from "util";
 import { CompressCallback, inflate, InputType } from "zlib";
 
 // The max allowed decomprssed size of files that are passed as "recorded games".
 // This needs to be limited to avoid someone uploading a huge zlib decompression bomb and trying to decompress the entire thing in memory
-const RECORDED_GAME_MAX_BYTES_TO_DECOMPRESS = 50000000; // 50mb
+const RECORDED_GAME_MAX_BYTES_TO_DECOMPRESS = 500000000; // 50mb
 // Refuse to try to read strings longer than this, as it's indicative that something went wrong
 const RECORDED_GAME_MAX_STRING_LENGTH = 500;
 
@@ -18,11 +18,17 @@ export async function parseRecordedGameMetadata(file: File): Promise<RecordedGam
     return await parseMetadataFromDecompressedRecordedGame(decompressed);
 }
 
+interface ParsedString
+{
+    content: string,
+    streamBytesConsumed: number,
+};
+
 // In these files, a string is saved as:
 // 1) The number of characters in the string, as a little endian int32
 // 2) Bytes of the number of characters in the string, encoded as utf16
 // (This means 2 bytes of buffer per character in the string)
-function readString(buffer: ArrayBuffer, offset: number): string
+function readString(buffer: ArrayBuffer, offset: number): ParsedString
 {
     const view = new DataView(buffer);
     const stringLength = view.getUint32(offset, true);
@@ -33,7 +39,14 @@ function readString(buffer: ArrayBuffer, offset: number): string
     const characterDataSlice = buffer.slice(offset+4, offset+4 + (2*stringLength));
     const uint8CharacterData = new Uint8Array(characterDataSlice);
     const decoder = new TextDecoder("utf-16le");
-    return decoder.decode(uint8CharacterData);
+    const unsafeContent = decoder.decode(uint8CharacterData);
+    const streamBytesConsumed = 4 + (unsafeContent.length*2);
+    const saferContent = unsafeContent.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039");
+
+    return {
+        content: saferContent,
+        streamBytesConsumed: streamBytesConsumed,
+    };
 }  
 
 // This "l33t-zlib" format was used in the original AoM (and probably AoE3 as well)
@@ -55,7 +68,8 @@ async function decompressL33tZlib(compressed: ArrayBuffer): Promise<Buffer>
     }
     catch (err)
     {
-        throw new RecParseError("Failed to decompress file");
+        console.error("Decompression error: " + err);
+        throw new RecParseError("Failed to decompress file: " + err);
     }
 }
 
@@ -96,7 +110,7 @@ function findBuildInfoString(decompressed: Buffer)
     {
         throw new RecParseError("Failed to find start of build info string");
     }
-    return readString(decompressed.buffer, buildInfoOffset);
+    return readString(decompressed.buffer, buildInfoOffset).content;
 }
 
 async function parseMetadataFromDecompressedRecordedGame(decompressed: Buffer): Promise<RecordedGameMetadata>
@@ -146,9 +160,10 @@ async function parseMetadataFromDecompressedRecordedGame(decompressed: Buffer): 
     }
     const output = {
         // 13 total: 12 players plus mother nature
-        playerdata: [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}],
-        buildstring: buildInfoString,
-        buildnumber: buildNumber,
+        playerData: [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}],
+        buildString: buildInfoString,
+        buildNumber: buildNumber,
+        parsedAt: new Date(),
     };
     // Points to the length of the string of the first key
     let currentOffset = metadataOffset - 4;
@@ -159,8 +174,9 @@ async function parseMetadataFromDecompressedRecordedGame(decompressed: Buffer): 
         {
             throw new RecParseError("Key found after type 3, cannot read due to unknown data length");
         }
-        const key = readString(decompressed.buffer, currentOffset);
-        currentOffset += 4 + (key.length*2);
+        const keyData = readString(decompressed.buffer, currentOffset);
+        const key = keyData.content;
+        currentOffset += keyData.streamBytesConsumed;
         const keyType = view.getUint32(currentOffset, true);
         currentOffset += 4;
         // keyType is an enum, but all the values aren't known
@@ -196,8 +212,9 @@ async function parseMetadataFromDecompressedRecordedGame(decompressed: Buffer): 
             }
             case 10:    // string
             {
-                const keyValue = readString(decompressed.buffer, currentOffset);
-                currentOffset += (4 + keyValue.length*2);
+                const keyValueData = readString(decompressed.buffer, currentOffset);
+                const keyValue = keyValueData.content;
+                currentOffset += keyValueData.streamBytesConsumed;
                 addMetadataKeyToOutput(output, key, keyValue);
                 break;
             }
@@ -216,12 +233,12 @@ async function parseMetadataFromDecompressedRecordedGame(decompressed: Buffer): 
     const typedOutput = output as RecordedGameMetadata;
 
     // Make sure all the keys are there that should be there
-    let playerDataKeys = RecordedGamePlayerMetadataNumbers as ReadonlyArray<string>;
-    playerDataKeys = playerDataKeys.concat(RecordedGamePlayerMetadataStrings as ReadonlyArray<string>);
-    playerDataKeys = playerDataKeys.concat(RecordedGamePlayerMetadataBooleans as ReadonlyArray<string>);
-    for (const playerIndex in typedOutput.playerdata)
+    let playerDataKeys = RecordedGamePlayerMetadataNumbersRequired as ReadonlyArray<string>;
+    playerDataKeys = playerDataKeys.concat(RecordedGamePlayerMetadataStringsRequired as ReadonlyArray<string>);
+    playerDataKeys = playerDataKeys.concat(RecordedGamePlayerMetadataBooleansRequired as ReadonlyArray<string>);
+    for (const playerIndex in typedOutput.playerData)
     {
-        const playerData = typedOutput.playerdata[playerIndex];
+        const playerData = typedOutput.playerData[playerIndex];
         for (const key of playerDataKeys)
         {
             if (playerData[key as keyof RecordedGamePlayerMetadata] === undefined)
@@ -230,9 +247,9 @@ async function parseMetadataFromDecompressedRecordedGame(decompressed: Buffer): 
             }
         }
     }
-    let mainDataKeys = RecordedGameMetadataNumbers as ReadonlyArray<string>;
-    mainDataKeys = mainDataKeys.concat(RecordedGameMetadataStrings as ReadonlyArray<string>);
-    mainDataKeys = mainDataKeys.concat(RecordedGameMetadataBooleans as ReadonlyArray<string>);
+    let mainDataKeys = RecordedGameMetadataNumbersRequired as ReadonlyArray<string>;
+    mainDataKeys = mainDataKeys.concat(RecordedGameMetadataStringsRequired as ReadonlyArray<string>);
+    mainDataKeys = mainDataKeys.concat(RecordedGameMetadataBooleansRequired as ReadonlyArray<string>);
     for (const key of mainDataKeys)
     {
         if (typedOutput[key as keyof RecordedGameMetadata] === undefined)
@@ -242,7 +259,32 @@ async function parseMetadataFromDecompressedRecordedGame(decompressed: Buffer): 
     }
 
     // Now that everything is there, trim output.playerdata to the correct number of players
-    typedOutput.playerdata.splice(typedOutput.gamenumplayers+1, 13-typedOutput.gamenumplayers);
+    typedOutput.playerData.splice(typedOutput.gameNumPlayers+1, 13-typedOutput.gameNumPlayers);
+    // Parse teams into more manageable list
+    typedOutput.teams = [];
+    const teamIdToTeamArrayIndex = new Map<number, number>();
+    for (const playerData of typedOutput.playerData)
+    {
+        // Mother nature doesn't belong to a team
+        if (playerData.id == 0) continue;
+        const teamId = playerData.teamId;
+        let index = teamIdToTeamArrayIndex.get(teamId);
+        if (index === undefined)
+        {
+            index = typedOutput.teams.length;
+            teamIdToTeamArrayIndex.set(teamId, index);
+            typedOutput.teams.push([playerData.id]);
+        }
+        else
+        {
+            typedOutput.teams[index].push(playerData.id);
+        }
+    }
+    // For now: force all 2 player games into 1v1s, until the meaning of teamID === -1 is known
+    if (typedOutput.teams.length == 1 && typedOutput.gameNumPlayers == 2)
+    {
+        typedOutput.teams = [[1], [2]];
+    }
     return typedOutput;
 }
 
@@ -270,28 +312,31 @@ function addMetadataKeyToOutput(output: any, keyName: string, value: number | st
         }
         const playerNumberLength = playerNumber.toFixed(0).length;
         keyName = keyName.slice(10 + playerNumberLength);
-        targetObject = output.playerdata[playerNumber];
+        targetObject = output.playerData[playerNumber];
     }
-    let validKeys: string[] = [];
+    keyName = RecordedGameRawKeysToCamelCase.get(keyName) ?? keyName;
+    let requiredKeys: ReadonlyArray<String> = [];
+    let optionalKeys: ReadonlyArray<String> = [];
     let isValidKey = false;
     if (typeof value == "number")
     {
-        let placeToSearch = isPlayerKey ? RecordedGamePlayerMetadataNumbers : RecordedGameMetadataNumbers as ReadonlyArray<string>;
-        isValidKey = placeToSearch.includes(keyName);
+        requiredKeys = isPlayerKey ? RecordedGamePlayerMetadataNumbersRequired : RecordedGameMetadataNumbersRequired as ReadonlyArray<string>;
+        optionalKeys = isPlayerKey ? RecordedGamePlayerMetadataNumbersOptional : RecordedGameMetadataNumbersOptional as ReadonlyArray<string>;
     }
     else if (typeof value == "string")
     {
-        let placeToSearch = isPlayerKey ? RecordedGamePlayerMetadataStrings : RecordedGameMetadataStrings as ReadonlyArray<string>;
-        isValidKey = placeToSearch.includes(keyName);
+        requiredKeys = isPlayerKey ? RecordedGamePlayerMetadataStringsRequired : RecordedGameMetadataStringsRequired as ReadonlyArray<string>;
+        optionalKeys = isPlayerKey ? RecordedGamePlayerMetadataStringsOptional : RecordedGameMetadataStringsOptional as ReadonlyArray<string>;
     }
     else if (typeof value == "boolean")
     {
-        let placeToSearch = isPlayerKey ? RecordedGamePlayerMetadataBooleans : RecordedGameMetadataBooleans as ReadonlyArray<string>;
-        isValidKey = placeToSearch.includes(keyName);
+        requiredKeys = isPlayerKey ? RecordedGamePlayerMetadataBooleansRequired : RecordedGameMetadataBooleansRequired as ReadonlyArray<string>;
+        optionalKeys = isPlayerKey ? RecordedGamePlayerMetadataBooleansOptional : RecordedGameMetadataBooleansOptional as ReadonlyArray<string>;
     }
+    isValidKey = requiredKeys.includes(keyName) || optionalKeys.includes(keyName);
     if (!isValidKey)
     {
-        console.log(`Discarded key ${keyName} value ${value}`);
+        // console.log(`Discarded key ${keyName} value ${value}`);
         return;
     }
     targetObject[keyName] = value;

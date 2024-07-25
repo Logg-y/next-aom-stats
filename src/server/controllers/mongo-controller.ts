@@ -1,7 +1,7 @@
-import { MythRecs } from "@/types/MythRecs";
-import queryMythRecs from "../services/mongo-service";
+import { queryMythRecs } from "../services/mongo-service";
+import { IRecordedGame } from "@/types/RecordedGame";
 
-// todo - add pagination params
-export async function getMythRecs(): Promise<MythRecs[]> {
-  return await queryMythRecs();
+export async function getMythRecs(page: number): Promise<IRecordedGame[]> {
+  const result = await queryMythRecs(page);
+  return result;
 }
